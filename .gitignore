@@ -1,0 +1,19 @@
+# data and derived files: never commit (human-subject data, large, or embed participant imagery)
+CUTrial/
+cuvault2/
+tmp/
+reports/
+recordings/
+extracted_frames*/
+*.rrd
+*.mp4
+*.mov
+*.avi
+*.npz
+*.npy
+*.pdf
+*.c3d
+# python
+__pycache__/
+*.pyc
+.venv*/
