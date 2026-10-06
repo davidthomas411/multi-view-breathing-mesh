@@ -56,6 +56,28 @@ ADB (raw video): see [Abdominal vs thoracic deep breathing](#abdominal-vs-thorac
 * **Body-part segmentation** covers the black leggings as one clean lower-clothing region; the person mask agrees with the silhouette of the marker-guided mesh at IoU 0.83 / 0.85 in the two best cameras (T4, T3) and 0.76 median over the five cameras, against 0.61 for the markerless multi-view mesh.
 
 <!-- RESULTS_20 -->
+**Cold-start fit** (MHR fitted to the Sapiens2 keypoints of all five cameras, started from each camera's SAM 3D Body pose in turn, no Vicon and no SAM 3D Body mesh in the objective; 5 TDB frames; median marker-to-mesh distance in mm, same metric as experiment 16):
+
+| Mesh | all markers | chest array | pelvis, legs, feet | head and arms |
+|---|---|---|---|---|
+| SAM 3D Body, best single camera (T4, picked with Vicon) | 34 | 26 | 44 | 36 |
+| SAM 3D Body, typical single camera | 113 | 106 | 107 | 162 |
+| SAM 3D Body multi-view consensus (markerless) | 41 | 22 | 44 | 64 |
+| **Sapiens2 cold start, keypoints only** | 22 | 29 | 23 | 13 |
+| marker-guided (reference, uses the markers) | 16 | 15 | 20 | 11 |
+
+**The median hides a failure: the belly floats.** Height of each mesh's anterior surface above the skin under the 16 chest-array balls (highest vertex within 3 cm horizontally minus the ball height; + = the mesh floats above the skin; the marker-guided mesh reads +5 to +19 mm because of the 3 cm window and the ball radius):
+
+| Mesh | row 1 (upper chest) | row 2 | row 3 (upper abdomen) | row 4 (lower abdomen) |
+|---|---|---|---|---|
+| cold start | +32 | +24 | +86 | +96 |
+| multi-view | +24 | -27 | +28 | +34 |
+| marker-guided | +19 | +5 | +15 | +10 |
+
+* The cold-start abdomen sits **7-9 cm above the skin** (rows 3-4) and the chest 2-3 cm; the multi-view consensus is within 1-3 cm of the reference there. Keypoints say where the joints are, not how thick the belly is, and nothing in the fit constrains the surface between them.
+* The segmentation looks right because the silhouette hardly sees it: the Sapiens2 person mask and the cold-start silhouette overlap at IoU 0.76 (marker-guided 0.80, multi-view 0.61), since from cameras looking down at oblique angles a belly 8 cm too high covers the same pixels. The keypoint-only fit never used the mask.
+* Seeding skin tracking on this mesh fails: amplitude ratio 0.43-0.50 against Vicon (MAE 2.1-2.7 mm) versus 0.94-1.0 for seeds on the multi-view mesh.
+* **Under test:** a body-part **mask term** (the mesh must cover the person pixels of every camera) and a **multi-view consensus term** (SAM 3D Body's dense surface cues, which are good on the torso, kept alongside the Sapiens2 skeleton); `sap_fit.py` options `W_SIL` and `W_MV`. Their results will be added here.
 
 ## Abdominal vs thoracic deep breathing
 

@@ -19,6 +19,8 @@ P = np.load(f"{CT}/{PTS}.npz"); T = np.load(TMP + "/track/track.npz", allow_pick
 def proj(Xv): return cv2.projectPoints(Xv.reshape(-1, 1, 3), rvec, tvec, K, DIST)[0].reshape(-1, 2)
 def seed(v):
     if v == "fit": return P["X"]
+    if v == "sap":                                                                                     # the Sapiens2 cold-start mesh (sap_fit.py), first frame: no Vicon and no SAM 3D Body mesh in the seeds
+        sx = np.load(TI.tdir("sap_fit") + "/sapfit_0.4b_rot%s.npz" % os.environ.get("SAPFIT_SUFFIX", ""))["X"][0].astype(np.float64); return (P["bary"][:, :, None] * sx[T["faces"][P["tri"]]]).sum(1)
     if v == "mv":                                                                                       # the markerless multi-view SAM 3D Body mesh (mv_fit.py), first frame: no Vicon in the seeds
         mvx = np.load(TI.tdir("mv_fit") + "/mv_fit.npz")["X"][0].astype(np.float64); return (P["bary"][:, :, None] * mvx[T["faces"][P["tri"]]]).sum(1)
     vb0 = T["vb"][0].astype(np.float64)

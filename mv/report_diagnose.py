@@ -8,7 +8,7 @@ def build(ctx):
     # ---------------------------------------------------------------- 1. depth vs lateral
     Z = np.load(f"{TMP}/mv_fit/err_decompose.npz", allow_pickle=True); names = [str(n) for n in Z["names"]]
     chest = [j for j, n in enumerate(names) if len(n) == 3 and n[0] in "RL" and n[1:].isdigit()]; star = [j for j, n in enumerate(names) if n.startswith("*")]; low = [j for j in range(len(names)) if j not in chest and j not in star]
-    groups = [("chest array", chest), ("pelvis, legs, feet", low), ("head and arms", star)]; meshes = ["T1", "T2", "T3", "T4", "T5", "MV", "fit"]; lab = {"MV": "multi-view\n(markerless)", "fit": "marker-guided"}
+    groups = [("chest array", chest), ("pelvis, legs, feet", low), ("head and arms", star)]; meshes = ["T1", "T2", "T3", "T4", "T5", "MV", "fit"]; lab = {"MV": "multi-\nview", "fit": "marker-\nguided"}
     med = lambda a: float(np.nanmedian(a))
     dep = {(g, m): med(Z["E_" + m][:, ix, 0]) for g, ix in groups for m in meshes}; lat = {(g, m): med(Z["E_" + m][:, ix, 1]) for g, ix in groups for m in meshes}; bias = {(g, m): med(Z["S_" + m][:, ix]) for g, ix in groups for m in meshes if "S_" + m in Z.files}
     f1, axs = plt.subplots(1, 2, figsize=(10.4, 3.7), sharey=False); w = 0.26; xs = np.arange(len(meshes)); colg = [C["blue"], C["orange"], C["purple"]]
@@ -16,7 +16,7 @@ def build(ctx):
         for k, (g, _) in enumerate(groups): a_.bar(xs + (k - 1) * w, [d_[(g, m)] for m in meshes], w, color=colg[k], label=g)
         a_.set_xticks(xs); a_.set_xticklabels([lab.get(m, m) for m in meshes], fontsize=8); a_.set_title(ttl, fontsize=9)
     axs[0].legend(fontsize=8); decomp = fig_b64(f1)
-    rows = [[m if m not in lab else lab[m].replace("\n", " ")] + sum(([("%.0f" % dep[(g, m)]), ("%.0f" % lat[(g, m)]), ("%+.0f" % bias[(g, m)]) if (g, m) in bias else "&ndash;"] for g, _ in groups), []) for m in meshes]
+    rows = [[{"MV": "multi-view (markerless)", "fit": "marker-guided"}.get(m, "single camera " + m)] + sum(([("%.0f" % dep[(g, m)]), ("%.0f" % lat[(g, m)]), ("%+.0f" % bias[(g, m)]) if (g, m) in bias else "&ndash;"] for g, _ in groups), []) for m in meshes]
     # ---------------------------------------------------------------- 2. hold-out markers
     hp = f"{TMP}/holdout/holdout.json"; hold = json.load(open(hp)) if os.path.exists(hp) else None; hold_html = ""; hold_kpi = None
     if hold:

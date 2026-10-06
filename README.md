@@ -15,8 +15,8 @@ Six calibrated GoPro cameras look at a supine volunteer. The code in this reposi
 | Can the six cameras be calibrated into the Vicon frame? | Yes: checkerboard + Vicon balls found in the images, PnP RMS 1-2 px per camera (T6 is unsynchronised and excluded) | [calibration](docs/EXPERIMENTS.md#calibration-and-registration) |
 | How good is one-camera SAM 3D Body? | 36 mm (best camera) to 243 mm (worst) median distance to the Vicon markers, **114 mm for a typical camera**. The dominant error is **depth**: the body is placed 13-31 cm too far from the camera in 4 of 5 views | [mesh](docs/EXPERIMENTS.md#body-mesh), [depth](docs/EXPERIMENTS.md#why-the-marker-guided-fit-is-better) |
 | Does a markerless multi-view fit help? | **41 mm** median (3x better than a typical camera, about equal to the best one, without knowing which that is). It does not improve the chest breathing signal | report 16 |
-| What does the marker-guided fit (Vicon markers as 3D anchors) reach? | 16 mm over the trial (10 mm at the fitted markers; held-out-marker numbers in [experiments](docs/EXPERIMENTS.md#why-the-marker-guided-fit-is-better)) | reports 7-14, 19 |
-| Can Sapiens2 keypoints replace the markers as 3D anchors? | Triangulated from five views, knees / ankles / wrists land **24-35 mm** from Vicon-derived joint proxies, against 130-220 mm for SAM 3D Body's own skeleton; median over landmarks 69 vs 161 mm | [Sapiens2](docs/EXPERIMENTS.md#sapiens2-cold-start) |
+| What does the marker-guided fit (Vicon markers as 3D anchors) reach? | 16 mm median to the markers in the nearest-vertex metric used here (10 mm to the surface at the fitted markers, so partly training error; the held-out-marker test is in [experiments](docs/EXPERIMENTS.md#why-the-marker-guided-fit-is-better)) | reports 7-14, 19 |
+| Can Sapiens2 replace the markers as 3D anchors? | **Partly.** Triangulated from five views, its keypoints put knees / ankles / wrists **24-35 mm** from Vicon-derived joint proxies (130-220 mm for SAM 3D Body's own skeleton). A mesh fitted only to them is 22 mm from the markers overall (limbs and head 13-23 mm, against 44-64 mm for the multi-view consensus) but its **abdomen floats 7-9 cm above the skin** and it cannot seed skin tracking; mask and consensus variants are being tested | [Sapiens2](docs/EXPERIMENTS.md#sapiens2-cold-start) |
 | Can the skin surface be tracked without markers? | Yes, to **~1 mm**: multi-camera Lucas-Kanade on skin and fabric texture with the reflective balls *painted out of the video*: r = 0.985, MAE 0.85 mm against the 16-ball chest array, 1,142-5,500 triangulated 3D points | reports 13, 15, 17 |
 | ...with no Vicon information in the tracking? | MAE 1.0 mm when the seed points are placed on the markerless multi-view mesh | report 17 |
 | Do abdominal- and thoracic-directed deep breathing differ, as seen by skin tracking? | Regional bias B (thoracic / abdominal amplitude): **0.30 (ADB) vs 1.04 (TDB)** from video only; Vicon on the same trials 0.29 vs 0.86. Per-ball amplitude agreement r = 0.89 | [report 18](docs/EXPERIMENTS.md#abdominal-vs-thoracic-deep-breathing) |
@@ -38,24 +38,24 @@ Respiration is a ~1 cm surface motion; a body-pose network is wrong by several c
 
 ```mermaid
 flowchart LR
-  subgraph CAL[Calibration]
-    ECal[checkerboard clip] --> Kb[intrinsics + board poses]
-    Balls[Vicon balls found in the images] --> PnP[PnP per camera]
-    Kb --> PnP --> Cams[cameras in the Vicon frame]
+  subgraph CAL["Calibration"]
+    ECal["checkerboard clip"] --> Kb["intrinsics + board poses"]
+    Balls["Vicon balls found in the images"] --> PnP["PnP per camera"]
+    Kb --> PnP --> Cams["cameras in the Vicon frame"]
   end
-  subgraph L1[Layer 1: body mesh, seconds per frame]
-    S2[Sapiens2: 308 keypoints + 29 body parts] --> CS[cold-start MHR fit]
-    SAM[SAM 3D Body in every camera] --> MV[multi-view consensus fit]
+  subgraph L1["Layer 1: body mesh (seconds per frame)"]
+    S2["Sapiens2: 308 keypoints + 29 body parts"] --> CS["cold-start MHR fit"]
+    SAM["SAM 3D Body in every camera"] --> MV["multi-view consensus fit"]
     CS --> MV
   end
-  subgraph L2[Layer 2: skin surface, frame rate]
-    Seeds[seed points on the mesh] --> LK[Lucas-Kanade in every camera]
-    LK --> Tri[triangulation, >=2-3 cameras] --> Disp[dense 3D displacement field]
+  subgraph L2["Layer 2: skin surface (frame rate)"]
+    Seeds["seed points on the mesh"] --> LK["Lucas-Kanade in every camera"]
+    LK --> Tri["triangulation from 2-3 or more cameras"] --> Disp["dense 3D displacement field"]
   end
   Cams --> MV
   MV --> Seeds
-  Disp --> Resp[respiration: regional amplitude, thoracic/abdominal bias]
-  Vicon[(Vicon markers: scoring only)] -.-> MV
+  Disp --> Resp["respiration: regional amplitude, thoracic/abdominal bias"]
+  Vicon[("Vicon markers: scoring only")] -.-> MV
   Vicon -.-> Disp
 ```
 
@@ -134,6 +134,7 @@ python thoracoabdominal_markerless.py TDB m41mv_e33_wide_f25_c2 ; python thoraco
 ## Limitations (read before reusing any number)
 
 * **One participant, two trials, one pose.** The cohort statistics in report 18 are Vicon-only (14 participants with all three maneuvers).
+* **The Sapiens2 cold-start mesh is not usable on the torso yet:** a keypoint-only fit leaves the abdomen ~8 cm above the skin; the overall median (22 mm) hides it (see the surface-height table in the experiments page).
 * **The marker-guided mesh is partly "training error":** it is fitted to exactly the markers it is scored against; the hold-out test in the experiments page separates the two.
 * **Skin tracking measures displacement from a reference frame**, not absolute position. It needs texture: bare abdomen skin has few trackable points, which under-samples the upper-abdomen row and biases the regional bias B (about +0.2 in TDB).
 * **The balls are painted out using their Vicon positions** (a patient has none), and camera extrinsics came from the balls once; a checkerboard calibration would serve in practice.

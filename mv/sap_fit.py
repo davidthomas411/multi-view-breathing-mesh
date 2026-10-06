@@ -16,7 +16,7 @@ import mmc17_sam3d as M, marker_fit as MF, mv_fit as W, trial_io as TI
 DEV = "cuda"; K = M.K; DIST = M.DIST; fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
 SIZE = os.environ.get("SAPSIZE", "0.4b"); ROT = os.environ.get("SAPROT", "rot"); SAPD = TI.tdir("sapiens2"); MVS = TI.tdir("mv_sam3d"); OUTD = TI.tdir("sap_fit")
 # per-keypoint weights: body+feet (0-20) and the extra body points (63-69) = 1, hands (21-62) = 0.1, face and the rest (70-307) = 0.03
-W_SIL = float(os.environ.get("W_SIL", 0.0)); K1, K2 = float(DIST[0]), float(DIST[1]); VID = torch.arange(0, 18439, 3, device=DEV)         # silhouette term (weight W_SIL; 0 = keypoints only), radial distortion of the stabilised frames
+W_SIL = float(os.environ.get("W_SIL", 0.0)); W_MV = float(os.environ.get("W_MV", 0.0)); K1, K2 = float(DIST[0]), float(DIST[1]); VID = torch.arange(0, 18439, 3, device=DEV)         # silhouette term (weight W_SIL; 0 = keypoints only), radial distortion of the stabilised frames
 CW = np.full(308, 0.03, np.float32); CW[:21] = 1.0; CW[63:70] = 1.0; CW[21:63] = 0.1; CWt = torch.tensor(CW, device=DEV)
 
 
@@ -76,12 +76,13 @@ def kp_loss(Xk, obs, thr=0.3, sg=25.0):
     return tot / torch.clamp(wsum, min=1.0), per
 
 
-def optimise(Fh, p, body, rc, tc, to_world, obs, body_ref, iters, lr_body, lr_rigid, lam, masks=None):
+def optimise(Fh, p, body, rc, tc, to_world, obs, body_ref, iters, lr_body, lr_rigid, lam, masks=None, mv=None):
     body = body.clone().requires_grad_(True); rc = rc.clone().requires_grad_(True); tc = tc.clone().requires_grad_(True)
     opt = torch.optim.Adam([{"params": [rc, tc], "lr": lr_rigid}] + ([{"params": [body], "lr": lr_body}] if lr_body > 0 else []))
     for it in range(iters):
         opt.zero_grad(); vl, kl = kp_forward(Fh, p, body); l, _ = kp_loss(to_world(kl, rc, tc), obs)
         if masks is not None and W_SIL > 0: l = l + W_SIL * sil_loss(to_world(vl[VID], rc, tc), masks)
+        if mv is not None and W_MV > 0: l = l + W_MV * W.mv_loss(to_world(vl, rc, tc), mv["obs"], mv["okv"], mv["vidx"], mv["wts"])[0]
         (l + lam * ((body - body_ref) ** 2).sum()).backward(); opt.step()
     with torch.no_grad(): vl, kl = kp_forward(Fh, p, body); l, per = kp_loss(to_world(kl, rc, tc), obs); X = to_world(vl, rc, tc)
     return body.detach(), rc.detach(), tc.detach(), float(l), per, X.detach()
@@ -97,18 +98,26 @@ def vicon_markers(f):
 if __name__ == "__main__":
     frames = [int(a) for a in sys.argv[1:]] or [250]; Fh = MF.Fitter(); res = dict(frames=[], X=[], loss=[], per=[], start=[]); names_all, _ = vicon_markers(250); t00 = time.time()
     for f in frames:
-        obs = load_sapiens(f); masks = load_masks(f) if W_SIL > 0 else None; nv = sum(o is not None for o in obs); print(f"=== frame {f}: Sapiens2 keypoints in {nv} cameras", flush=True); best = None; t0 = time.time()
+        obs = load_sapiens(f); masks = load_masks(f) if W_SIL > 0 else None; mvo = W.load_obs(f) if W_MV > 0 else None; vidx_t = torch.tensor(np.load(f"{MVS}/{f:04d}.npz")["vidx"], device=DEV); nv = sum(o is not None for o in obs); print(f"=== frame {f}: Sapiens2 keypoints in {nv} cameras", flush=True); best = None; t0 = time.time()
         for v in range(5):
             if obs[v] is None: continue
             o = MF.sam3d_raw(M.read(TI.TRIAL, v + 1, f), v)
             if o is None: continue
             p, b0 = Fh.init(o); to_world = W.make_world(v, np.asarray(o["pred_cam_t"])); rc = torch.zeros(3, device=DEV); tc = torch.zeros(3, device=DEV)
-            body, rc, tc, l1, _, _ = optimise(Fh, p, b0, rc, tc, to_world, obs, b0, 80, 0.0, 6e-3, 0.0, masks)
-            body, rc, tc, l2, per, X = optimise(Fh, p, b0, rc, tc, to_world, obs, b0, 300, 1e-2, 3e-3, 0.02, masks)
+            body, rc, tc, l1, _, X1 = optimise(Fh, p, b0, rc, tc, to_world, obs, b0, 80, 0.0, 6e-3, 0.0, masks)
+            mv = None
+            if mvo is not None:                                                                                   # gate the SAM 3D Body views that disagree with this start (same rule as mv_fit.py), then add the consensus term
+                obs_mv, okv, _ = mvo
+                with torch.no_grad(): per0 = W.mv_loss(X1, obs_mv, okv, vidx_t, None)[1]
+                vids = [i for i in range(5) if okv[i]]; med = float(np.median(per0)); wts = {i: 1.0 for i in range(5)}
+                for i, r in zip(vids, per0):
+                    if r > max(2.0 * med, 80.0): wts[i] = 0.0
+                mv = dict(obs=obs_mv, okv=okv, vidx=vidx_t, wts=wts)
+            body, rc, tc, l2, per, X = optimise(Fh, p, b0, rc, tc, to_world, obs, b0, 300, 1e-2, 3e-3, 0.02, masks, mv)
             print(f"   start from T{v + 1}: loss {l1:.1f} (rigid) -> {l2:.1f}; median keypoint residual per camera {np.round(per, 0)} px", flush=True)
             if best is None or l2 < best[0]: best = (l2, v, X, per)
         l, v, X, per = best; X = X.cpu().numpy().astype(np.float64); names, mk = vicon_markers(f); ok = ~np.isnan(mk).any(1); vidx = np.load(f"{MVS}/{f:04d}.npz")["vidx"]
         d = cKDTree(X[vidx]).query(mk[ok])[0] * 1000; res["frames"].append(f); res["X"].append(X.astype(np.float32)); res["loss"].append(l); res["per"].append(per); res["start"].append(v + 1)
         print(f"   chosen start T{v + 1} (loss {l:.1f}); marker->mesh median {np.median(d):.1f} mm, p90 {np.percentile(d, 90):.1f} mm  ({time.time() - t0:.0f}s)", flush=True)
-        np.savez(f"{OUTD}/sapfit_{SIZE}_{ROT}{'_sil' if W_SIL > 0 else ''}.npz", frames=np.array(res["frames"]), X=np.array(res["X"]), loss=np.array(res["loss"]), start=np.array(res["start"]))
+        np.savez(f"{OUTD}/sapfit_{SIZE}_{ROT}{'_sil' if W_SIL > 0 else ''}{'_mv' if W_MV > 0 else ''}.npz", frames=np.array(res["frames"]), X=np.array(res["X"]), loss=np.array(res["loss"]), start=np.array(res["start"]))
     print("done in %.0fs" % (time.time() - t00))
